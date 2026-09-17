@@ -64,10 +64,12 @@ static const struct ea8064_seq ea8064_on_seq[] = {
 			       0xF2, 0xFB, 0x04, 0xFF, 0xFF, 0xFF } },
 	{ PKT_GEN,    1, 3, { 0xF0, 0xA5, 0xA5 } },
 	{ PKT_DCS1,   1, 2, { MIPI_DCS_SET_TEAR_ON, 0x00 } },
-	{ PKT_DCS1,   1, 2, { MIPI_DCS_SET_DISPLAY_BRIGHTNESS, 0x20 } },
-	/* vendor sends 0x51 with 0x00 and lets the display driver raise it;
-	 * fixed mid-low value here so a working init is visible, see note above */
-	{ PKT_DCS1,  10, 2, { MIPI_DCS_WRITE_DISPLAY_BRIGHTNESS, 0x80 } },
+	/* 0x53 = WCTD (write control display), the vendor's "53 20" */
+	{ PKT_DCS1,   1, 2, { MIPI_DCS_WRITE_CONTROL_DISPLAY, 0x20 } },
+	/* 0x51 = SDB (set display brightness). The vendor stream sends 0x00 and
+	 * lets the display driver raise it later; a fixed mid value here keeps a
+	 * working init observable, see the note at the top of the file. */
+	{ PKT_DCS1,  10, 2, { MIPI_DCS_SET_DISPLAY_BRIGHTNESS, 0x80 } },
 	{ PKT_DCS0,   1, 1, { MIPI_DCS_SET_DISPLAY_ON } },
 };
 
