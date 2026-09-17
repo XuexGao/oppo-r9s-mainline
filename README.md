@@ -64,7 +64,8 @@ GSI.
 ## Layout
 
 ```
-dts/msm8953-oppo-r9s.dts                     board description
+overlay/arch/arm64/boot/dts/qcom/msm8953-oppo-r9s.dts
+                                             board description (paths mirror the kernel tree)
 overlay/drivers/gpu/drm/panel/panel-oppo-ea8064.c
                                              panel driver, init stream transcribed
                                              from the vendor dtsi (byte-identical)
