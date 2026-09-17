@@ -1,0 +1,5 @@
+kernel/
+ak3/
+ak3-src/
+*.zip
+build.log

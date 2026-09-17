@@ -1,0 +1,76 @@
+# OPPO R9s (msm8953) mainline bring-up fragment.
+# Merged over ARCH=arm64 defconfig. Anything listed here that the tree does not
+# know is reported by the CI's check step rather than silently dropped.
+
+# --- SoC / power -----------------------------------------------------------
+CONFIG_ARCH_QCOM=y
+CONFIG_QCOM_SCM=y
+CONFIG_QCOM_SMD_RPM=y
+CONFIG_QCOM_RPMH=y
+CONFIG_REGULATOR_QCOM_SPMI=y
+CONFIG_REGULATOR_QCOM_LABIBB=y
+CONFIG_INTERCONNECT_QCOM=y
+CONFIG_INTERCONNECT_QCOM_MSM8953=y
+
+# --- display: MDP5 + DSI + panel ------------------------------------------
+CONFIG_DRM=y
+CONFIG_DRM_KMS_HELPER=y
+CONFIG_DRM_MIPI_DSI=y
+CONFIG_DRM_MSM=y
+CONFIG_DRM_MSM_MDP5=y
+CONFIG_DRM_MSM_DSIO=y
+CONFIG_DRM_PANEL=y
+CONFIG_DRM_PANEL_OPPO_EA8064=y
+CONFIG_PHY_QCOM_MSM8953_DSI=y
+CONFIG_FB_DEFERRED_IO=y
+# console + boot logo: the only visible "is the panel alive" signal we have
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_DRM_FBDEV_EMULATION=y
+CONFIG_LOGO=y
+CONFIG_LOGO_LINUX_MONO=y
+CONFIG_LOGO_LINUX_VGA16=y
+CONFIG_LOGO_LINUX_CLUT224=y
+
+# --- input: Synaptics S3508 (RMI4) + keys ---------------------------------
+CONFIG_INPUT_TOUCHSCREEN=y
+CONFIG_MFD_RMI4=y
+CONFIG_MFD_RMI4_I2C=y
+CONFIG_INPUT_RMI4=y
+CONFIG_INPUT_RMI4_F03=y
+CONFIG_INPUT_RMI4_F34=y
+CONFIG_INPUT_RMI4_F54=y
+CONFIG_INPUT_KEYBOARD=y
+CONFIG_KEYBOARD_GPIO=y
+CONFIG_KEYBOARD_GPIO_POLLED=n
+
+# --- leds ------------------------------------------------------------------
+CONFIG_NEW_LEDS=y
+CONFIG_LEDS_CLASS=y
+CONFIG_LEDS_KTD202X=y
+
+# --- storage / usb ---------------------------------------------------------
+CONFIG_MMC=y
+CONFIG_MMC_SDHCI=y
+CONFIG_MMC_SDHCI_PLTFM=y
+CONFIG_MMC_SDHCI_MSM=y
+CONFIG_USB=y
+CONFIG_USB_DWC3=y
+CONFIG_USB_DWC3_MSM=y
+CONFIG_USB_GADGET=y
+CONFIG_USB_CONFIGFS=y
+CONFIG_USB_CONFIGFS_SERIAL=y
+CONFIG_USB_CONFIGFS_ADB=y
+
+# --- log capture without a usable UART ------------------------------------
+CONFIG_PRINTK=y
+CONFIG_PSTORE=y
+CONFIG_PSTORE_RAM=y
+CONFIG_EARLY_PRINTK=y
+CONFIG_DEBUG_INFO=n
+CONFIG_LOCALVERSION="-r9s-mainline"
+
+# --- not there yet, kept explicit so nobody thinks it was dropped by accident
+CONFIG_SND_SOC_QCOM=n
+CONFIG_DRM_PANEL_SIMPLE=n
+CONFIG_TOUCHSCREEN_SYNAPTICS_DSX=n
+CONFIG_CAMERA=n

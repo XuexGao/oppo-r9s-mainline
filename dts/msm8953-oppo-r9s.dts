@@ -1,0 +1,305 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * OPPO R9s (msm8953, board id 16017/16027) mainline bring-up.
+ *
+ * Facts below marked [vendor] were read out of the downstream 4.9 tree
+ * (arch/arm64/boot/dts/qcom/oppo-msm8953/**), which is the authoritative
+ * description of this board. Anything marked FIXME is a reasoned guess that
+ * still has to be confirmed on hardware - do not treat it as verified.
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/leds/common.h>
+
+#include "pm8953.dtsi"
+#include "pmi8950.dtsi"
+
+/ {
+	model = "OPPO R9s";
+	compatible = "oppo,r9s", "qcom,msm8953";
+
+	aliases {
+		mmc0 = &sdhc_1;		/* eMMC [vendor] */
+		mmc1 = &sdhc_2;		/* microSD [vendor] */
+		serial0 = &uart_0;
+	};
+
+	chosen {
+		/*
+		 * The downstream tree enables blsp1_uart0 as "uart_console_active",
+		 * so the SoC does drive a debug console there. Whether the pads are
+		 * reachable on the R9s board is a separate question - if not, the
+		 * ramoops region below is how you get the log back out.
+		 */
+		stdout-path = "/soc/serial@78b3000:115200n8";
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio_keys_default>;
+
+		volume-up {
+			label = "Volume Up";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&tlmm 34 GPIO_ACTIVE_LOW>;	/* [vendor] */
+		};
+
+		volume-down {
+			label = "Volume Down";
+			linux,code = <KEY_VOLUMEDOWN>;
+			gpios = <&tlmm 39 GPIO_ACTIVE_LOW>;	/* [vendor] */
+		};
+	};
+
+	/* Post-panic / post-reboot console log when there is no usable UART. */
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		ramoops@9ff00000 {
+			compatible = "ramoops";
+			reg = <0 0x9ff00000 0 0x100000>;
+			record-size = <0x1000>;
+			console-size = <0x80000>;
+			pmsg-size = <0x8000>;
+		};
+	};
+
+	vph_pwr: vph-pwr-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vph_pwr";
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	/*
+	 * microSD card detect / the external LDO enable line are driven from a
+	 * GPIO on this board [vendor: gpio = <&tlmm 64 0>].
+	 */
+	sdio_en: sdio-en-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "sdio_en";
+		gpio = <&tlmm 64 GPIO_ACTIVE_HIGH>;
+		enable-active-gpio;
+		regulator-min-microvolt = <2950000>;
+		regulator-max-microvolt = <2950000>;
+	};
+};
+
+&tlmm {
+	gpio-reserved-ranges = <0 4>, <81 4>;
+
+	gpio_keys_default: gpio-keys-default {
+		pins = "gpio34", "gpio39";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	touch_reset: touch-reset {
+		pins = "gpio16";			/* [vendor] */
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	touch_attn: touch-attn {
+		pins = "gpio17";			/* [vendor] */
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	panel_reset: panel-reset {
+		pins = "gpio41";			/* [vendor: platform-enable-gpio] */
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+};
+
+/* --- eMMC: core 2.9 V (l8), I/O 1.8 V (l5), both read from the downstream dtsi --- */
+&sdhc_1 {
+	vmmc-supply = <&pm8953_l8>;
+	vqmmc-supply = <&pm8953_l5>;
+	status = "okay";
+};
+
+&sdhc_2 {
+	cd-gpios = <&tlmm 131 GPIO_ACTIVE_LOW>;
+	vmmc-supply = <&sdio_en>;
+	vqmmc-supply = <&pm8953_l11>;
+	status = "okay";
+};
+
+/* --- touchscreen: Synaptics S3508 on BLSP1 QUP3, addr 0x20, attn=17, reset=16 --- */
+&i2c_3 {
+	status = "okay";
+
+	touchscreen@20 {
+		compatible = "syna,rmi4-i2c";
+		reg = <0x20>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&touch_reset &touch_attn>;
+
+		vdd-supply = <&pm8953_l6>;		/* vcc_i2c_1v8 [vendor] */
+		vio-supply = <&pm8953_l6>;
+
+		interrupt-parent = <&tlmm>;
+		interrupts = <17 IRQ_TYPE_EDGE_FALLING>;
+		ataka,reset-delay-us = <100000>;
+
+		reset-gpios = <&tlmm 16 GPIO_ACTIVE_LOW>;
+		attn-gpios = <&tlmm 17 GPIO_ACTIVE_LOW>;
+
+		syna,rmi4-f01@1 {
+			reg = <0x1>;
+			syna,rmi4-no-irq;
+		};
+
+		syna,rmi4-x0@7 {
+			reg = <0x7>;
+			syna,num-of-fingers = <2>;
+			syna,size-of-key-cells = <2>;
+			syna,x-size = <1080>;
+			syna,y-size = <1920>;
+			touchscreen-inverted-y;
+		};
+	};
+};
+
+/* --- display: MDP5 + DSI0, Samsung EA8064 AMOLED in CMD mode [vendor] --- */
+&mdp {
+	status = "okay";
+};
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi0 {
+	status = "disabled";
+
+	/*
+	 * Blocked upstream, not by this panel description: the EA8064 is an AMOLED
+	 * whose AVDD/VNEG come from the PMI8950 LAB/IBB boosters [vendor:
+	 * msm8953-pmi8950.dtsi &labibb qcom,qpnp-labibb-mode = "amoled"], and
+	 * drivers/regulator/qcom-labibb-regulator.c matches only
+	 * "qcom,pmi8998-lab-ibb" - there is no pmi8950 flavour in mainline, so the
+	 * supplies this node needs cannot be provided yet. Keep the node (it is
+	 * the transcription of the hardware) but leave it disabled until either
+	 * that driver gains a pmi8950 entry or the panel is fed another way.
+	 *
+	 * This is also why none of the msm8953-mainline boards have a display
+	 * node: it is a PMIC driver gap, not a DSI/MDP5 one.
+	 */
+	panel: panel {
+		compatible = "oppo,ea8064-cmd";
+		status = "disabled";
+		reset-gpios = <&tlmm 41 GPIO_ACTIVE_LOW>;
+
+		port {
+			panel_in: endpoint {
+				remote-endpoint = <&mdss_dsi0_out>;
+			};
+		};
+	};
+};
+
+&mdss_dsi0_phy {
+	status = "okay";
+};
+
+&mdp5_intf1_out {
+	remote-endpoint = <&mdss_dsi0_in>;
+};
+
+&mdss_dsi0_out {
+	remote-endpoint = <&panel_in>;
+};
+
+/* --- PMIC regulators (mainline expects the board to declare these) --- */
+&rpm_requests {
+	regulators {
+		compatible = "qcom,rpm-pm8953-regulators";
+
+		vdd_s3-supply = <&vph_pwr>;
+		vdd_s4-supply = <&vph_pwr>;
+		vdd_l3-supply = <&pm8953_s3>;
+		vdd_l5_l6-supply = <&pm8953_s4>;
+		vdd_l8_l11-supply = <&vph_pwr>;
+
+		pm8953_s3: s3 {
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+
+		pm8953_s4: s4 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+
+		/* USB2 PHY VDD [vendor: &hsusb_phy vdd-supply] */
+		pm8953_l3: l3 {
+			regulator-min-microvolt = <1200000>;
+			regulator-max-microvolt = <1200000>;
+		};
+
+		/* eMMC I/O, 1.8 V [vendor: qcom,vdd-io-voltage-level] */
+		pm8953_l5: l5 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-always-on;
+		};
+
+		/* 1.8 V I/O rail used by the touchscreen and panel VCI [vendor] */
+		pm8953_l6: l6 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+		};
+
+		/* eMMC core, 2.9 V [vendor: qcom,vdd-voltage-level] */
+		pm8953_l8: l8 {
+			regulator-min-microvolt = <2900000>;
+			regulator-max-microvolt = <2900000>;
+			regulator-always-on;
+			regulator-boot-on;
+		};
+
+		/* microSD VMMC, 2.95 V [vendor: qcom,vdd-voltage-level] */
+		pm8953_l11: l11 {
+			regulator-min-microvolt = <2950000>;
+			regulator-max-microvolt = <2950000>;
+		};
+	};
+};
+
+/* --- USB --- */
+&hsusb_phy {
+	vdd-supply = <&pm8953_l3>;
+	vdd33-supply = <&vph_pwr>;
+	status = "okay";
+};
+
+&usb3 {
+	status = "okay";
+};
+
+&usb3_dwc3 {
+	dr_mode = "peripheral";
+};

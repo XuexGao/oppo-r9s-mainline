@@ -1,0 +1,180 @@
+name: Build R9s mainline kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: '上游基础仓库（msm8953 主线项目）'
+        required: true
+        default: 'msm8953-mainline/linux'
+        type: string
+      kernel_ref:
+        description: '要构建的 tag / 分支'
+        required: true
+        default: 'v7.1.3-r0'
+        type: string
+      publish_release:
+        description: '是否发布到 GitHub Releases（否：仅上传构建产物）'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  AK3_REPO: XuexGao/android_kernel_oppo_msm8937
+  AK3_REF: lineage-22.1-sukisu-susfs
+
+jobs:
+  build:
+    name: ${{ inputs.kernel_ref }}
+    runs-on: ubuntu-24.04
+    env:
+      ARCH: arm64
+      CROSS_COMPILE: aarch64-linux-gnu-
+      KERNEL_DIR: ${{ github.workspace }}/kernel
+    steps:
+      - name: 安装依赖
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            device-tree-compiler curl git ca-certificates xz-utils \
+            kmod python3 rsync
+
+      - name: 取本项目（覆盖层）
+        uses: actions/checkout@v4
+        with:
+          path: overlay-src
+
+      - name: 取内核源码
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "${{ inputs.kernel_ref }}" \
+            "https://github.com/${{ inputs.kernel_repo }}" "$KERNEL_DIR"
+          git -C "$KERNEL_DIR" log -1 --format='基线: %h %s (%cd)' --date=short
+
+      - name: 套用覆盖层（board dts + 面板驱动）
+        run: |
+          set -euo pipefail
+          chmod +x overlay-src/scripts/apply-overlay.sh
+          overlay-src/scripts/apply-overlay.sh "$KERNEL_DIR" overlay-src/overlay
+          test -f "$KERNEL_DIR/arch/arm64/boot/dts/qcom/msm8953-oppo-r9s.dts"
+          test -f "$KERNEL_DIR/drivers/gpu/drm/panel/panel-oppo-ea8064.c"
+
+      - name: 生成 config（defconfig + R9s 片段）
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          make ARCH=$ARCH defconfig
+          ./scripts/kconfig/merge_config.sh -m .config "$GITHUB_WORKSPACE/overlay-src/configs/r9s.fragment"
+          make ARCH=$ARCH olddefconfig
+          echo "=== 片段落地情况 ==="
+          missing=0
+          while read -r line; do
+            case "$line" in
+              CONFIG_*=y|CONFIG_*=m|CONFIG_*=n) : ;;
+              *) continue ;;
+            esac
+            sym=${line%%=*}
+            want=${line#*=}
+            have=$(grep -E "^#? ?$sym(=| is not set)" .config || true)
+            case "$want" in
+              y|m)
+                if ! grep -q "^$sym=$want" .config; then
+                  echo "::warning::$sym 期望 =$want，实际: ${have:-不存在该符号}"
+                  missing=$((missing+1))
+                fi ;;
+            esac
+          done < "$GITHUB_WORKSPACE/overlay-src/configs/r9s.fragment"
+          echo "未按期望落地的片段项: $missing"
+          grep -E "^CONFIG_(DRM_MSM|DRM_PANEL_OPPO_EA8064|MFD_RMI4_I2C|MMC_SDHCI_MSM|PSTORE_RAM|LOGO|PHY_QCOM_MSM8953_DSI|REGULATOR_QCOM_LABIBB)=" .config || true
+
+      - name: 编译内核与 dtb
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          make -j"$(nproc)" ARCH=$ARCH Image.gz dtbs 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          grep -E "error|Error" "$GITHUB_WORKSPACE/build.log" | grep -v "warning" | head -20 || true
+          ls -l arch/arm64/boot/Image.gz arch/arm64/boot/dts/qcom/msm8953-oppo-r9s.dtb
+
+      - name: 编译模块
+        working-directory: kernel
+        run: |
+          set -euo pipefail
+          make -j"$(nproc)" ARCH=$ARCH modules
+          find . -name '*.ko' | head -20
+          echo "模块总数: $(find . -name '*.ko' | wc -l)"
+
+      - name: DTB 静态检查
+        run: |
+          set -euo pipefail
+          dtb=$KERNEL_DIR/arch/arm64/boot/dts/qcom/msm8953-oppo-r9s.dtb
+          dtc -I dtb -O dts "$dtb" 2>/dev/null > "$RUNNER_TEMP/r9s.dts.roundtrip" || {
+            echo "::error::编出来的 dtb 无法反编译，二进制有问题"; exit 1; }
+          echo "=== 关键节点是否进了 dtb ==="
+          for n in "oppo,r9s" "oppo,ea8064-cmd" "syna,rmi4-i2c" "qcom,rpm-pm8953-regulators" "ramoops" "qcom,lab"; do
+            printf "%-32s %s\n" "$n" "$(grep -c "$n" "$RUNNER_TEMP/r9s.dts.roundtrip")"
+          done
+
+      - name: 打 AnyKernel3 包
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --filter=blob:none --sparse -b "$AK3_REF" \
+            "https://github.com/$AK3_REPO" ak3-src
+          git -C ak3-src sparse-checkout set AnyKernel3
+          cp -a ak3-src/AnyKernel3 ak3
+          # 8953 走 Image.gz + dtb 追加的老路子
+          cat "$KERNEL_DIR"/arch/arm64/boot/Image.gz \
+              "$KERNEL_DIR"/arch/arm64/boot/dts/qcom/msm8953-oppo-r9s.dtb \
+              > ak3/Image.gz-dtb
+          mkdir -p ak3/modules
+          find "$KERNEL_DIR" -name '*.ko' -exec cp -t ak3/modules/ {} + 2>/dev/null || true
+          cat > ak3/anykernel.sh <<'AKS'
+          ### AnyKernel3 Ramdisk Mod Script
+          properties() { '
+          kernel.string=mainline r9s
+          do.devicecheck=0
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          '; }
+          ### AnyKernel install
+          boot_attributes() { :; }
+          BLOCK=auto;
+          IS_SLOT_DEVICE=0;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+          NO_MAGISK_CHECK=1;
+          . tools/ak3-core.sh;
+          split_boot;
+          flash_boot;
+          AKS
+          ( cd ak3 && zip -r9 "../r9s-mainline-${{ inputs.kernel_ref }}-$(date +%Y%m%d).zip" . )
+          ls -lh r9s-mainline-*.zip
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: r9s-mainline-${{ inputs.kernel_ref }}
+          path: |
+            r9s-mainline-*.zip
+            build.log
+          if-no-files-found: error
+
+      - name: 发布 Release（可选）
+        if: ${{ inputs.publish_release }}
+        uses: ncipollo/release-action@v1
+        with:
+          tag: mainline-${{ inputs.kernel_ref }}-${{ github.run_number }}
+          name: OPPO R9s mainline ${{ inputs.kernel_ref }}
+          body: |
+            msm8953 主线 bring-up 构建（**未实机验证**，先备份 boot 再刷）。
+            基线：${{ inputs.kernel_repo }}@${{ inputs.kernel_ref }}
+          artifacts: r9s-mainline-*.zip
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}
