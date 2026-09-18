@@ -1,5 +1,11 @@
 name: Build R9s mainline kernel
 
+# 说明：借鉴 XuexGao/android_kernel_oppo_msm8937（lineage-22.1-sukisu-susfs）
+# 的 CI 经验：ccache 对象级缓存、concurrency 取消防冗余构建、apt 超时/重试加固、
+# 固定 KBUILD_BUILD_USER/HOST 避免暴露 runner 身份。
+# 与参考仓库不同：这里是主线（5.x/6.x）+ GNU 交叉编译器（aarch64-linux-gnu-gcc）
+# 的就地构建，所以 ccache 用 `CC="ccache ...gcc"` 包一层而不是 clang。
+
 on:
   workflow_dispatch:
     inputs:
@@ -19,6 +25,12 @@ on:
         type: boolean
         default: false
 
+# 同一工作流 + 同一分支 + 同一上游 ref 只保留一个进行中的构建；
+# 换 ref 的构建（如同时测两个 tag）互不干扰。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.kernel_ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -33,17 +45,34 @@ jobs:
     env:
       ARCH: arm64
       CROSS_COMPILE: aarch64-linux-gnu-
+      # 只包 gcc（编译大头）走 ccache；binutils 仍走 CROSS_COMPILE，避免
+      # objcopy/ld 被 ccache 拦截而报错。
+      CC: ccache aarch64-linux-gnu-gcc
+      # /proc/version 括号里的 user@host 固定成中性值，不像 CI 机器编译。
+      KBUILD_BUILD_USER: r9s-builder
+      KBUILD_BUILD_HOST: localhost
       KERNEL_DIR: ${{ github.workspace }}/kernel
     steps:
       - name: 安装依赖
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          # apt 加固：超时 + 自动重试，防止镜像挂起把 job 拖到超时
+          APT_OPTS="-o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          UPDATED=0
+          for i in 1 2 3; do
+            if sudo apt-get update ${APT_OPTS}; then
+              UPDATED=1
+              break
+            fi
+            echo "apt-get update 第 ${i} 次失败，5 秒后重试"
+            sleep 5
+          done
+          [ "${UPDATED}" = "1" ] || { echo "::error::apt-get update 连续失败，请检查网络"; exit 1; }
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ${APT_OPTS} \
             build-essential bc bison flex libssl-dev libelf-dev \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             device-tree-compiler curl git ca-certificates xz-utils \
-            kmod python3 rsync
+            kmod python3 rsync zip ccache
 
       - name: 取本项目（覆盖层）
         uses: actions/checkout@v4
@@ -64,6 +93,14 @@ jobs:
           overlay-src/scripts/apply-overlay.sh "$KERNEL_DIR" overlay-src/overlay
           test -f "$KERNEL_DIR/arch/arm64/boot/dts/qcom/msm8953-oppo-r9s.dts"
           test -f "$KERNEL_DIR/drivers/gpu/drm/panel/panel-oppo-ea8064.c"
+
+      # 对象级构建缓存：CCache 按（编译器+参数+源码哈希）复用，跨 run 生效。
+      # key 固定挂在上游 ref 上，同一 ref 重复构建/小改动重跑时基本秒出。
+      - name: CCache 缓存（内核对象级复用）
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: mainline-${{ inputs.kernel_repo }}-${{ inputs.kernel_ref }}
+          max-size: 4G
 
       - name: 生成 config（defconfig + R9s 片段）
         working-directory: kernel
