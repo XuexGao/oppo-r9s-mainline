@@ -15,6 +15,7 @@
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/leds/common.h>
 
+#include "msm8953.dtsi"
 #include "pm8953.dtsi"
 #include "pmi8950.dtsi"
 
@@ -189,25 +190,28 @@
 };
 
 &mdss_dsi0 {
-	status = "disabled";
+	status = "okay";
 
 	/*
-	 * Blocked upstream, not by this panel description: the EA8064 is an AMOLED
-	 * whose AVDD/VNEG come from the PMI8950 LAB/IBB boosters [vendor:
-	 * msm8953-pmi8950.dtsi &labibb qcom,qpnp-labibb-mode = "amoled"], and
-	 * drivers/regulator/qcom-labibb-regulator.c matches only
-	 * "qcom,pmi8998-lab-ibb" - there is no pmi8950 flavour in mainline, so the
-	 * supplies this node needs cannot be provided yet. Keep the node (it is
-	 * the transcription of the hardware) but leave it disabled until either
-	 * that driver gains a pmi8950 entry or the panel is fed another way.
+	 * The AMOLED's AVDD/VNEG come from the PMI8950 LAB/IBB boosters
+	 * [vendor: msm8953-pmi8950.dtsi &labibb qcom,qpnp-labibb-mode = "amoled"].
+	 * At tag v7.1.3-r0 mainline pmi8950.dtsi finally ships a labibb node
+	 * (compatible "qcom,pmi8950-lab-ibb", "qcom,pmi8998-lab-ibb" at the same
+	 * 0xdc00/0xde00 register bases the pmi8998 driver already handles), so
+	 * the panel can be fed from &lab / &ibb.
 	 *
-	 * This is also why none of the msm8953-mainline boards have a display
-	 * node: it is a PMIC driver gap, not a DSI/MDP5 one.
+	 * Supply names below follow what the mainline DSI core / panel driver
+	 * requests. VNEG (ibb) is not yet exported as a separate panel regulator
+	 * by panel-oppo-ea8064.c, which currently only drives avdd+vci — this is
+	 * FIXME(unverified) best-effort wiring to be confirmed on hardware.
 	 */
 	panel: panel {
 		compatible = "oppo,ea8064-cmd";
-		status = "disabled";
+		status = "okay";
 		reset-gpios = <&tlmm 41 GPIO_ACTIVE_LOW>;
+
+		vci-supply = <&pm8953_l6>;
+		avdd-supply = <&lab>;
 
 		port {
 			panel_in: endpoint {
@@ -298,8 +302,12 @@
 
 &usb3 {
 	status = "okay";
-};
-
-&usb3_dwc3 {
+	/*
+	 * In mainline msm8953.dtsi the dwc3 core *is* the usb3 node itself
+	 * (compatible "qcom,msm8953-dwc3", "qcom,snps-dwc3"); there is no
+	 * separate "usb3_dwc3" child label to point dr_mode at, so it has to be
+	 * set here. The base SoC file already defaults the role switch to
+	 * "peripheral" (USB gadget/adb), this just makes it explicit.
+	 */
 	dr_mode = "peripheral";
 };

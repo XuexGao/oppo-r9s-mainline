@@ -26,19 +26,20 @@ Every claim below is labelled by how it was established:
 - Audio amp `nxp,tfa98xx` @0x36 on `i2c_8`, reset GPIO 33 `[vendor]`
 - Keys: volume up/down on GPIO 34 / 39 `[vendor]`
 
-## The two blockers found so far
+## Blockers
 
-1. **Display needs a PMIC driver that mainline does not have.**
+1. **Display PMIC gap - resolved upstream at v7.1.3-r0.**
    The panel is AMOLED and its AVDD/VNEG come from the PMI8950 **LAB/IBB**
-   boosters (`&labibb qcom,qpnp-labibb-mode = "amoled"` in the vendor tree),
-   but `drivers/regulator/qcom-labibb-regulator.c` matches
-   **only `qcom,pmi8998-lab-ibb`** — there is no pmi8950 flavour `[upstream]`.
-   That is why none of the msm8953-mainline boards carry a display node: it is
-   a PMIC gap, not a DSI/MDP5 one (the SoC side is fine: `qcom,msm8953-mdp5`,
-   `qcom,msm8953-dsi-ctrl` and `qcom,dsi-phy-14nm-8953` all exist in mainline
-   `[upstream]`).
-   Consequence here: the panel node is committed but `status = "disabled"`, and
-   the DSI controller is disabled, so the rest can be brought up without it.
+   boosters. Older mainline `qcom-labibb-regulator.c` matched only
+   `qcom,pmi8998-lab-ibb`. Since tag **v7.1.3-r0**, `pmi8950.dtsi` ships its own
+   `labibb` node (`compatible = "qcom,pmi8950-lab-ibb", "qcom,pmi8998-lab-ibb"`,
+   register bases `0xdc00`/`0xde00` — the same the pmi8998 driver already
+   handles) `[upstream]`, so the panel can now be fed from `&lab`/`&ibb`.
+   Consequently the R9s panel node and `mdss_dsi0` are enabled; the panel gets
+   `vci-supply` + `avdd-supply`. **Still FIXME(unverified)** on hardware: the
+   panel driver currently drives avdd+vci only and does not yet export VNEG
+   (ibb) as a separate rail, so the first boot is a probe, not a claim of a
+   lit panel.
 2. **No usable debug UART is known on this board**, so first-boot evidence has
    to come from elsewhere: `ramoops`/pstore (declared, matching the reference
    boards' reservation) and USB gadget/adb.
@@ -51,9 +52,10 @@ Every claim below is labelled by how it was established:
    userspace, eMMC mounted, and touch probed.
 2. **M2 - input/usb/storage usable.** Touch (RMI4), USB adb, battery
    (`bq27541` -> mainline `bq27xxx_battery_i2c`, still to be added).
-3. **M3 - display.** Requires a pmi8950 LAB/IBB entry in
-   `qcom-labibb-regulator.c` (upstream-able work; the vendor driver has the
-   register values). Only then does the panel node get re-enabled.
+3. **M3 - display.** The pmi8950 LAB/IBB entry already exists upstream since
+   v7.1.3-r0 (see Blocker 1 above), so the panel node and `mdss_dsi0` are now
+   enabled. What remains is on-hardware confirmation of the panel probe and the
+   VNEG (ibb) rail that `panel-oppo-ea8064.c` does not yet drive.
 4. **M4 - audio / modem / sensors.**
 
 Android as a target is out of scope: mainline drops the vendor HAL interface

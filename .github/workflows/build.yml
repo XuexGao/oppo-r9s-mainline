@@ -116,9 +116,16 @@ jobs:
           dtc -I dtb -O dts "$dtb" 2>/dev/null > "$RUNNER_TEMP/r9s.dts.roundtrip" || {
             echo "::error::编出来的 dtb 无法反编译，二进制有问题"; exit 1; }
           echo "=== 关键节点是否进了 dtb ==="
-          for n in "oppo,r9s" "oppo,ea8064-cmd" "syna,rmi4-i2c" "qcom,rpm-pm8953-regulators" "ramoops" "qcom,lab"; do
+          for n in "oppo,r9s" "oppo,ea8064-cmd" "syna,rmi4-i2c" "qcom,rpm-pm8953-regulators" "ramoops" "qcom,lab" "pmi8950-lab-ibb" "avdd-supply" "vci-supply"; do
             printf "%-32s %s\n" "$n" "$(grep -c "$n" "$RUNNER_TEMP/r9s.dts.roundtrip")"
           done
+          # 显示已在前一轮解除了 labibb 阻塞（v7.1.3-r0 起主线 pmi8950.dtsi 自带 labibb），
+          # 这里锁死 panel 节点必须是 enabled，防止回退成禁用状态。
+          if ! grep -q "status = \"okay\"" "$RUNNER_TEMP/r9s.dts.roundtrip"; then
+            echo "::warning::dtb 里没有任何 status=okay 节点，显示/存储可能仍是 disabled"
+          fi
+          grep -q "oppo,ea8064-cmd" "$RUNNER_TEMP/r9s.dts.roundtrip" \
+            && echo "::notice::panel (oppo,ea8064-cmd) 已在 dtb 中"
 
       - name: 打 AnyKernel3 包
         run: |
