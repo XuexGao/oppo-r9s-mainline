@@ -106,7 +106,9 @@ jobs:
         run: |
           set -euo pipefail
           make -j"$(nproc)" ARCH=$ARCH modules
-          find . -name '*.ko' | head -20
+          # find 输出超过 20 行时 head 会关闭管道导致 find 收到 SIGPIPE，
+          # 在 pipefail 下会让本步骤误报失败；这里只做展示，容忍该信号。
+          find . -name '*.ko' 2>/dev/null | head -20 || true
           echo "模块总数: $(find . -name '*.ko' | wc -l)"
 
       - name: DTB 静态检查
