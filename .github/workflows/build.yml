@@ -24,6 +24,11 @@ on:
         required: false
         type: boolean
         default: false
+      include_modules:
+        description: '是否把 .ko 模块打进刷机包（默认否：anykernel.sh 用 do.modules=0，模块刷不进去，纯撑体积）'
+        required: false
+        type: boolean
+        default: false
 
 # 同一工作流 + 同一分支 + 同一上游 ref 只保留一个进行中的构建；
 # 换 ref 的构建（如同时测两个 tag）互不干扰。
@@ -177,8 +182,16 @@ jobs:
           cat "$KERNEL_DIR"/arch/arm64/boot/Image.gz \
               "$KERNEL_DIR"/arch/arm64/boot/dts/qcom/msm8953-oppo-r9s.dtb \
               > ak3/Image.gz-dtb
-          mkdir -p ak3/modules
-          find "$KERNEL_DIR" -name '*.ko' -exec cp -t ak3/modules/ {} + 2>/dev/null || true
+          # 默认不打 .ko：anykernel.sh 是 do.modules=0，模块刷机不安装。
+          # 全量 .ko（defconfig 下约 1500+ 个、348MB）纯把包撑到 100MB，无意义。
+          # 需要模块时才把 include_modules 打开。
+          if [ "${{ inputs.include_modules }}" = "true" ]; then
+            mkdir -p ak3/modules
+            find "$KERNEL_DIR" -name '*.ko' -exec cp -t ak3/modules/ {} + 2>/dev/null || true
+            echo "include_modules=true：已把 .ko 打进包（提醒：do.modules=0，刷机仍不会安装）"
+          else
+            echo "未打包模块，包体回到内核本体大小"
+          fi
           cat > ak3/anykernel.sh <<'AKS'
           ### AnyKernel3 Ramdisk Mod Script
           properties() { '
