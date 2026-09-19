@@ -180,7 +180,7 @@
 	};
 };
 
-/* --- display: MDP5 + DSI0, Samsung EA8064 AMOLED in CMD mode [vendor] --- */
+/* --- display: MDP5 + DSI0, JDI R63452 CMD panel [vendor: 16027] --- */
 &mdp {
 	status = "okay";
 };
@@ -193,30 +193,24 @@
 	status = "okay";
 
 	/*
-	 * The AMOLED's AVDD/VNEG come from the PMI8950 LAB/IBB boosters
-	 * [vendor: msm8953-pmi8950.dtsi &labibb qcom,qpnp-labibb-mode = "amoled"].
-	 * At tag v7.1.3-r0 mainline pmi8950.dtsi finally ships a labibb node
-	 * (compatible "qcom,pmi8950-lab-ibb", "qcom,pmi8998-lab-ibb" at the same
-	 * 0xdc00/0xde00 register bases the pmi8998 driver already handles), so
-	 * the panel can be fed from &lab / &ibb.
-	 *
-	 * Supply names below follow what the mainline DSI core / panel driver
-	 * requests. VNEG (ibb) is not yet exported as a separate panel regulator
-	 * by panel-oppo-ea8064.c, which currently only drives avdd+vci — this is
-	 * FIXME(unverified) best-effort wiring to be confirmed on hardware.
+	 * Real device is 16027, whose panel is a JDI R63452 command-mode TFT/LCD
+	 * (NOT the Samsung EA8064 AMOLED of 16017). Evidence [vendor]:
+	 *   - dsi-panel-oppo16027jdi_r63452_1080p_cmd.dtsi
+	 *   - 16027/mtp.dtsi: platform-enable-gpio = tlmm 38; labibb mode "lcd"
+	 *   - common mtp.dtsi: platform-reset-gpio = tlmm 131
+	 * Panel supplies: lab/ibb come from the pmi8950 LAB/IBB (LCD bias mode);
+	 * vdd(2.85V)/vddio(1.8V) actual PMIC rails are FIXME(unverified) and are
+	 * left unbound so probe does not fail on them.
 	 */
 	panel: panel {
-		compatible = "oppo,ea8064-cmd";
+		compatible = "oppo,r63452-cmd";
 		status = "okay";
-		reset-gpios = <&tlmm 41 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&tlmm 131 GPIO_ACTIVE_HIGH>;	/* [vendor] platform-reset-gpio */
+		enable-gpios = <&tlmm 38 GPIO_ACTIVE_HIGH>;	/* [vendor] platform-enable-gpio */
 
-		vci-supply = <&pm8953_l6>;
-		avdd-supply = <&lab>;
-
-		/* VNEG(ibb) 对 AMOLED 是负压轨，FIXME(unverified)：未在真机确认极性/等级前
-		 * 默认不使能，避免伤屏。真要实测时，取消下面这行注释（panel-oppo-ea8064.c
-		 * 已经支持可选 vneg）即可；出问题也只需删掉这一行回退。
-		 * vneg-supply = <&ibb>; */
+		lab-supply = <&lab>;
+		ibb-supply = <&ibb>;
+		/* vdd / vddio: FIXME(unverified) - unbound until the real rail is known */
 
 		port {
 			panel_in: endpoint {
