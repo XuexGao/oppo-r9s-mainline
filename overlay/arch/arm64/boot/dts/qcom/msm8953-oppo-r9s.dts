@@ -213,6 +213,11 @@
 		vci-supply = <&pm8953_l6>;
 		avdd-supply = <&lab>;
 
+		/* VNEG(ibb) 对 AMOLED 是负压轨，FIXME(unverified)：未在真机确认极性/等级前
+		 * 默认不使能，避免伤屏。真要实测时，取消下面这行注释（panel-oppo-ea8064.c
+		 * 已经支持可选 vneg）即可；出问题也只需删掉这一行回退。
+		 * vneg-supply = <&ibb>; */
+
 		port {
 			panel_in: endpoint {
 				remote-endpoint = <&mdss_dsi0_out>;

@@ -37,9 +37,11 @@ Every claim below is labelled by how it was established:
    handles) `[upstream]`, so the panel can now be fed from `&lab`/`&ibb`.
    Consequently the R9s panel node and `mdss_dsi0` are enabled; the panel gets
    `vci-supply` + `avdd-supply`. **Still FIXME(unverified)** on hardware: the
-   panel driver currently drives avdd+vci only and does not yet export VNEG
-   (ibb) as a separate rail, so the first boot is a probe, not a claim of a
-   lit panel.
+   panel driver now supports an optional VNEG (ibb) rail (it enables it only if
+   `vneg-supply` is present), but the board dts keeps `vneg-supply = <&ibb>;`
+   **commented out** until the polarity/level is confirmed so a wrong negative
+   rail cannot be put across the panel by default - the first boot is a probe,
+   not a claim of a lit panel.
 2. **No usable debug UART is known on this board**, so first-boot evidence has
    to come from elsewhere: `ramoops`/pstore (declared, matching the reference
    boards' reservation) and USB gadget/adb.
@@ -54,8 +56,11 @@ Every claim below is labelled by how it was established:
    (`bq27541` -> mainline `bq27xxx_battery_i2c`, still to be added).
 3. **M3 - display.** The pmi8950 LAB/IBB entry already exists upstream since
    v7.1.3-r0 (see Blocker 1 above), so the panel node and `mdss_dsi0` are now
-   enabled. What remains is on-hardware confirmation of the panel probe and the
-   VNEG (ibb) rail that `panel-oppo-ea8064.c` does not yet drive.
+   enabled. `panel-oppo-ea8064.c` now supports an optional VNEG(ibb) rail but
+   the board dts keeps it disabled by default; what remains is on-hardware
+   confirmation of the panel probe (see First-boot diagnosis above) and, once
+   the supply is confirmed, uncommenting `vneg-supply = <&ibb>;` to actually
+   feed VNEG.
 4. **M4 - audio / modem / sensors.**
 
 Android as a target is out of scope: mainline drops the vendor HAL interface
@@ -91,6 +96,33 @@ Everything is built in GitHub Actions (no kernel builds on the phone):
 
 Artifacts: `r9s-mainline-<ref>-<date>.zip` (AnyKernel3, `Image.gz` + board dtb
 appended) and `build.log`.
+
+## First-boot diagnosis
+
+This board has **no usable debug UART**, so "which step does it hang at" is
+answered from pstore/ramoops (declared in the board dts), not a serial console.
+
+To collect a boot log:
+
+1. Flash a mainline boot image, let it stop at the OPPO logo, then **press and
+   hold the power button ~10 s** to force-power-off (this is what leaves a log
+   in ramoops).
+2. Boot back normally (returning to the stock kernel is fine).
+3. Read pstore: `adb shell` then `cat /sys/fs/pstore/console-ramoops-0`
+   wrapper - if adb is unavailable, the same file can be pulled from TWRP's
+   file manager after mounting.
+4. Post the tail of `console-ramoops-0` back here.
+
+| observation | meaning | next step |
+|---|---|---|
+| pstore has kernel log / panic | kernel **did** come up, died in a driver | read the last call trace; display/panel is the prime suspect |
+| pstore empty / file absent | kernel never got going (early hang / bootloader reject) | check `Image.gz-dtb` is actually recognized+loaded, and how the board dtb is appended |
+| log looks healthy but screen stays black / at logo | kernel is alive but the **display rail isn't bringing the panel up** | this is the VNEG(ibb)/LAB-IBB FIXME below |
+
+Display knee-tuning: VNEG is wired for the driver but kept **opt-in**. In
+`overlay/.../msm8953-oppo-r9s.dts` the panel node keeps `vneg-supply = <&ibb>;`
+commented out; only uncomment it for a real hardware test, and delete that one
+line to roll it back.
 
 ## Flashing / recovery
 

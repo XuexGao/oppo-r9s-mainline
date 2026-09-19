@@ -85,6 +85,7 @@ struct ea8064 {
 	struct mipi_dsi_device *dsi;
 	struct regulator *vci;
 	struct regulator *avdd;
+	struct regulator *vneg;
 	struct gpio_desc *reset;
 	bool prepared;
 };
@@ -136,6 +137,15 @@ static int ea8064_power_on(struct ea8064 *ctx)
 	if (ret)
 		goto err_avdd;
 
+	/* VNEG(ibb) 是可选的负压轨，FIXME(unverified)：dts 给了 vneg-supply 才使能，
+	 * 给不到时行为与之前完全一致，避免无证据接入负压轨伤屏。
+	 * 上电顺序：正压(avdd)/逻辑(vci) 先稳，再上 vneg。 */
+	if (ctx->vneg) {
+		ret = regulator_enable(ctx->vneg);
+		if (ret)
+			goto err_vci;
+	}
+
 	/* Vendor reset-sequence <1 5>, <0 2>, <1 12>: hold reset, release, wait */
 	gpiod_set_value_cansleep(ctx->reset, 1);
 	usleep_range(5000, 6000);
@@ -144,6 +154,8 @@ static int ea8064_power_on(struct ea8064 *ctx)
 
 	return 0;
 
+err_vci:
+	regulator_disable(ctx->vci);
 err_avdd:
 	regulator_disable(ctx->avdd);
 	return ret;
@@ -154,6 +166,8 @@ static int ea8064_power_off(struct ea8064 *ctx)
 	gpiod_set_value_cansleep(ctx->reset, 1);
 	usleep_range(5000, 6000);
 
+	if (ctx->vneg)
+		regulator_disable(ctx->vneg);
 	regulator_disable(ctx->vci);
 	regulator_disable(ctx->avdd);
 
@@ -281,6 +295,16 @@ static int ea8064_probe(struct mipi_dsi_device *dsi)
 	ctx->avdd = devm_regulator_get(dev, "avdd");
 	if (IS_ERR(ctx->avdd))
 		return dev_err_probe(dev, PTR_ERR(ctx->avdd), "Failed to get AVDD\n");
+
+	/* VNEG(ibb) 对 AMOLED 是负压轨，未确认前做成可选：dts 不接 vneg-supply 就跳过，
+	 * 避免无证据接入负压轨伤屏（详见 README Blocker 1 / M3）。 */
+	ctx->vneg = devm_regulator_get_optional(dev, "vneg");
+	if (IS_ERR(ctx->vneg)) {
+		if (PTR_ERR(ctx->vneg) == -ENODEV)
+			ctx->vneg = NULL;
+		else
+			return dev_err_probe(dev, PTR_ERR(ctx->vneg), "Failed to get VNEG\n");
+	}
 
 	ctx->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
 	if (IS_ERR(ctx->reset))
