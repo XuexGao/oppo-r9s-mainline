@@ -1,137 +1,49 @@
-# OPPO R9s (msm8953) mainline bring-up
+# OPPO R9s (msm8953) 主线内核 bring-up
 
-Goal: run a current mainline-based kernel (baseline here: the
-[`msm8953-mainline`](https://github.com/msm8953-mainline/linux) tree, tag
-`v7.1.3-r0`) on the OPPO R9s, which ships on a 4.9 CAF kernel.
+这是一个**主线内核 bring-up 项目的覆盖层仓库**：在本项目的基础上游
+[`msm8953-mainline/linux`](https://github.com/msm8953-mainline/linux)（默认 tag
+`v7.1.3-r0`）之上，为 OPPO R9s 维护**薄覆盖层**——board 设备树 + DRM panel 驱动
++ 内核配置片段，而不是 fork 一份完整内核。
 
-**This is a bring-up project. Nothing here has been run on hardware yet.**
-Every claim below is labelled by how it was established:
+> **当前状态：仍在 bring-up，尚未在真机上点亮或进入用户态。** 首刷到 OPPO logo
+> 后卡住。所有"已支持/正常"的说法都必须有真机证据，否则按 `FIXME(unverified)`
+> 处理。
 
-| marker | meaning |
-|---|---|
-| `[vendor]` | read out of the downstream 4.9 tree in [`XuexGao/android_kernel_oppo_msm8937`](https://github.com/XuexGao/android_kernel_oppo_msm8937), `arch/arm64/boot/dts/qcom/oppo-msm8953/**` — authoritative for this board |
-| `[upstream]` | verified against `torvalds/linux` source/bindings |
-| `FIXME(unverified)` | reasoned guess, must be confirmed on the device or from the schematic |
+**详细信息和功能实现**（文件逐项说明、CI 流程、本地构建、boot 诊断步骤、已知
+坑与 FIXME、维护约定）都写在 **[AGENT.md](AGENT.md)** 里，接手的 agent/开发者先读它。
 
-## What the board actually is (16017 / 16027)
+## 支持的机型与面板（先确认你的机器）
 
-- SoC `msm8953` (Snapdragon 625), PMIC `pm8953` + `pmi8950` `[vendor]`
-- Display: Samsung **EA8064** AMOLED, 1080x1920, **CMD mode**, 4 lanes,
-  DCS backlight, reset/enable on **GPIO 41** `[vendor]`
-- Touch: Synaptics **S3508 / s1302** on BLSP1 QUP3 (`i2c_3`), addr `0x20`,
-  attn IRQ **17**, reset **16**, IO rail `pm8953_l6` (1.8 V) `[vendor]`
-- eMMC: core `pm8953_l8` = 2.9 V, I/O `pm8953_l5` = 1.8 V `[vendor]`
-- microSD: VMMC `pm8953_l11` = 2.95 V, CD on GPIO 131 `[vendor]`
-- Notification/charge-pump LED driver `ktd,ktd2026` @0x30 on `i2c_3` `[vendor]`
-- Audio amp `nxp,tfa98xx` @0x36 on `i2c_8`, reset GPIO 33 `[vendor]`
-- Keys: volume up/down on GPIO 34 / 39 `[vendor]`
+OPPO R9s 有两个机型号，**面板不一样**（这是排查显示问题的第一要素）：
 
-## Blockers
-
-1. **Display PMIC gap - resolved upstream at v7.1.3-r0.**
-   The panel is AMOLED and its AVDD/VNEG come from the PMI8950 **LAB/IBB**
-   boosters. Older mainline `qcom-labibb-regulator.c` matched only
-   `qcom,pmi8998-lab-ibb`. Since tag **v7.1.3-r0**, `pmi8950.dtsi` ships its own
-   `labibb` node (`compatible = "qcom,pmi8950-lab-ibb", "qcom,pmi8998-lab-ibb"`,
-   register bases `0xdc00`/`0xde00` — the same the pmi8998 driver already
-   handles) `[upstream]`, so the panel can now be fed from `&lab`/`&ibb`.
-   Consequently the R9s panel node and `mdss_dsi0` are enabled; the panel gets
-   `vci-supply` + `avdd-supply`. **Still FIXME(unverified)** on hardware: the
-   panel driver now supports an optional VNEG (ibb) rail (it enables it only if
-   `vneg-supply` is present), but the board dts keeps `vneg-supply = <&ibb>;`
-   **commented out** until the polarity/level is confirmed so a wrong negative
-   rail cannot be put across the panel by default - the first boot is a probe,
-   not a claim of a lit panel.
-2. **No usable debug UART is known on this board**, so first-boot evidence has
-   to come from elsewhere: `ramoops`/pstore (declared, matching the reference
-   boards' reservation) and USB gadget/adb.
-
-## Milestones
-
-1. **M1 - does it run.** Build `Image.gz` + `msm8953-oppo-r9s.dtb`, flash through
-   the existing TWRP/AnyKernel3 path, then confirm from pstore
-   (`/sys/fs/pstore/console-ramoops-0` after a reboot) that the kernel got to
-   userspace, eMMC mounted, and touch probed.
-2. **M2 - input/usb/storage usable.** Touch (RMI4), USB adb, battery
-   (`bq27541` -> mainline `bq27xxx_battery_i2c`, still to be added).
-3. **M3 - display.** The pmi8950 LAB/IBB entry already exists upstream since
-   v7.1.3-r0 (see Blocker 1 above), so the panel node and `mdss_dsi0` are now
-   enabled. `panel-oppo-ea8064.c` now supports an optional VNEG(ibb) rail but
-   the board dts keeps it disabled by default; what remains is on-hardware
-   confirmation of the panel probe (see First-boot diagnosis above) and, once
-   the supply is confirmed, uncommenting `vneg-supply = <&ibb>;` to actually
-   feed VNEG.
-4. **M4 - audio / modem / sensors.**
-
-Android as a target is out of scope: mainline drops the vendor HAL interface
-this device's userspace needs (`ion`, the camera stack, qcom audio machines), so
-the realistic OS here is postmarketOS/Debian-style mobile Linux, not an A16/A17
-GSI.
-
-## Layout
-
-```
-overlay/arch/arm64/boot/dts/qcom/msm8953-oppo-r9s.dts
-                                             board description (paths mirror the kernel tree)
-overlay/drivers/gpu/drm/panel/panel-oppo-ea8064.c
-                                             panel driver, init stream transcribed
-                                             from the vendor dtsi (byte-identical)
-configs/r9s.fragment                         config fragment merged over defconfig
-scripts/apply-overlay.sh                     copies the above into a kernel tree
-.github/workflows/build.yml                  CI build + packaging (no local compiles)
-```
-
-Overlay + append instead of `.patch` files, so re-basing onto a newer upstream
-tag cannot conflict with us.
-
-## Building
-
-Everything is built in GitHub Actions (no kernel builds on the phone):
-
-`Actions → Build R9s mainline kernel → Run workflow`, with
-
-- `kernel_repo`: `msm8953-mainline/linux`
-- `kernel_ref`: `v7.1.3-r0` (or a branch such as `7.1/main`)
-- `publish_release`: off for experiments
-
-Artifacts: `r9s-mainline-<ref>-<date>.zip` (AnyKernel3, `Image.gz` + board dtb
-appended) and `build.log`.
-
-## First-boot diagnosis
-
-This board has **no usable debug UART**, so "which step does it hang at" is
-answered from pstore/ramoops (declared in the board dts), not a serial console.
-
-To collect a boot log:
-
-1. Flash a mainline boot image, let it stop at the OPPO logo, then **press and
-   hold the power button ~10 s** to force-power-off (this is what leaves a log
-   in ramoops).
-2. Boot back normally (returning to the stock kernel is fine).
-3. Read pstore: `adb shell` then `cat /sys/fs/pstore/console-ramoops-0`
-   wrapper - if adb is unavailable, the same file can be pulled from TWRP's
-   file manager after mounting.
-4. Post the tail of `console-ramoops-0` back here.
-
-| observation | meaning | next step |
+| 机型 | 面板 | 说明 |
 |---|---|---|
-| pstore has kernel log / panic | kernel **did** come up, died in a driver | read the last call trace; display/panel is the prime suspect |
-| pstore empty / file absent | kernel never got going (early hang / bootloader reject) | check `Image.gz-dtb` is actually recognized+loaded, and how the board dtb is appended |
-| log looks healthy but screen stays black / at logo | kernel is alive but the **display rail isn't bringing the panel up** | this is the VNEG(ibb)/LAB-IBB FIXME below |
+| **16017** | Samsung **EA8064** AMOLED | 本仓库 `panel-oppo-ea8064.c` 对应 |
+| **16027** | JDI **r63452** | 运行日志显示当前实机是这个，mainline 侧**尚无**对应 panel 驱动 |
 
-Display knee-tuning: VNEG is wired for the driver but kept **opt-in**. In
-`overlay/.../msm8953-oppo-r9s.dts` the panel node keeps `vneg-supply = <&ibb>;`
-commented out; only uncomment it for a real hardware test, and delete that one
-line to roll it back.
+> 从本次提供的运行日志（`dmesg.log` / `logcat.txt`）看，实机是 **16027 / JDI
+> r63452**。若确认如此，mainline 需要新增 JDI panel 驱动，当前 EA8064 驱动与实机
+> 面板型号不符，这是个 FIXME。
 
-## Flashing / recovery
+## 仓库组成
 
-The device currently runs a custom 4.9 kernel via AnyKernel3 from TWRP, which
-means the boot chain is already unlocked and reversible:
+```
+overlay/arch/arm64/boot/dts/qcom/msm8953-oppo-r9s.dts    板级设备树
+overlay/drivers/gpu/drm/panel/panel-oppo-ea8064.c        EA8064 panel 驱动
+configs/r9s.fragment                                     defconfig 之上的配置片段
+scripts/apply-overlay.sh                                 把 overlay 拷入内核树并挂钩构建
+.github/workflows/build.yml                              CI：拉上游→套覆盖层→编译→打包→校验
+```
 
-1. In TWRP, **back up the current boot image** (this is the only rollback path).
-2. Flash `r9s-mainline-*.zip`.
-3. If nothing appears: reboot to TWRP, restore the boot backup, and read
-   `/sys/fs/pstore/console-ramoops-0` from the running LOS system after the next
-   successful boot - pstore keeps the previous attempt's log.
-4. Do not flash a mainline boot image as your only copy of anything.
+## 怎么构建 / 刷机 / 排查
+
+- **构建**：GitHub **Actions** 手动触发 `Build R9s mainline kernel`；产物
+  `r9s-mainline-<ref>-<date>.zip`（AnyKernel3，约 16 MB，默认不含模块）。
+- **刷机**：TWRP 刷 zip（写入 boot 分区）。刷前务必备份原 boot。
+- **排查卡屏**：无调试 UART，靠 pstore 抓上次 boot 日志；步骤见 AGENT.md 的
+  "Boot 诊断"一节。
+
+## 证据标注
+
+`[vendor]`=读自下游 4.9 树（对该板权威）；`[upstream]`=已用主线源码核实；
+`FIXME(unverified)`=合理推测，需真机确认。不标 = 信息不成立，别当事实用。
