@@ -18,12 +18,12 @@ OPPO R9s 有两个机型号，**面板不一样**（这是排查显示问题的�
 
 | 机型 | 面板 | 说明 |
 |---|---|---|
-| **16017** | Samsung **EA8064** AMOLED | 本仓库 `panel-oppo-ea8064.c` 对应 |
-| **16027** | JDI **r63452** | 运行日志显示当前实机是这个，mainline 侧**尚无**对应 panel 驱动 |
+| **16017** | Samsung **EA8064** AMOLED | `panel-oppo-ea8064.c` 对应 |
+| **16027** | JDI **R63452**（cmd TFT/LCD） | **实机是这个**；`panel-oppo-jdi-r63452.c` 已按此默认启用 |
 
-> 从本次提供的运行日志（`dmesg.log` / `logcat.txt`）看，实机是 **16027 / JDI
-> r63452**。若确认如此，mainline 需要新增 JDI panel 驱动，当前 EA8064 驱动与实机
-> 面板型号不符，这是个 FIXME。
+> 运行日志确认实机是 **16027 / JDI r63452**。board dts 已切到 `oppo,r63452-cmd`
+> （reset 131 / enable 38 / lab·ibb 供电）。**背光(LM3697 i2c_2)** 与 **vdd/vddio
+> 具体 PMIC rail** 仍未接入，屏可探测但还没背光，属 FIXME。
 
 ## 仓库组成
 

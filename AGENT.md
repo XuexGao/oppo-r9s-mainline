@@ -24,14 +24,18 @@ OPPO R9s 两个机型号**面板不同**，这是排查显示问题的第一要�
 
 | 机型 | 面板 | vendor dtsi 文件名 | mainline 现状 |
 |---|---|---|---|
-| **16017** | Samsung **EA8064** AMOLED | `dsi-panel-oppo16017samsung_ea8064_1080p_cmd.dtsi` | 有 `panel-oppo-ea8064.c` |
-| **16027** | JDI **r63452** | `dsi-panel-oppo16027jdi_r63452_1080p_cmd.dtsi` | **尚无**驱动 |
+| **16017** | Samsung **EA8064** AMOLED | `dsi-panel-oppo16017samsung_ea8064_1080p_cmd.dtsi` | `panel-oppo-ea8064.c` |
+| **16027** | JDI **R63452** (cmd TFT/LCD) | `dsi-panel-oppo16027jdi_r63452_1080p_cmd.dtsi` | `panel-oppo-jdi-r63452.c`（**实机，默认**） |
 
-> **重要（本会话新增）**：用户提供的运行日志（`dmesg.log`/`logcat.txt`）显示实机
-> 用的面板是 `qcom,mdss_dsi_oppo16027jdi_r63452_1080p_cmd` → **实机是 16027/JDI**。
-> 如果确认，mainline 配 EA8064 驱动是**面板型号不符**，屏点不亮就有合理解释。这是
-> 当前最高优先级的 FIXME。下一步应拉取 JDI r63452 的 vendor dtsi，对照实现
-> `panel-oppo-...r63452` 驱动，并把 board dts 的面板 compatible/pin 按 16027 对齐。
+> **重要（本会话确认）**：实机是 **16027 / JDI r63452**（运行日志
+> `qcom,mdss_dsi_oppo16027jdi_r63452_1080p_cmd`），不是 16017 的 EA8064 AMOLED。
+> 当前 board dts 已切到 `oppo,r63452-cmd`。JDI r63452 是 command-mode TFT/LCD，
+> 供电走 pmi8950 **labibb 的 `"lcd"` 模式**（不是 AMOLED）。16027 显示栈关键走线
+> `[vendor]`：
+> - GPIO：reset=**131**、enable=**38**、bklight-en=34、TE=24
+> - panel 供电：**lab/ibb → `&lab`/`&ibb`**（pmi8950）；**vdd(2.85V)/vddio(1.8V)
+>   实际 PMIC rail FIXME(unverified)**
+> - 背光：独立 **LM3697** @ `i2c_2` 0x36（enable GPIO 46），**尚未接入 mainline**
 
 其余关键硬件 `[vendor]`：
 
@@ -49,7 +53,8 @@ OPPO R9s 两个机型号**面板不同**，这是排查显示问题的第一要�
 configs/r9s.fragment
 scripts/apply-overlay.sh
 overlay/arch/arm64/boot/dts/qcom/msm8953-oppo-r9s.dts
-overlay/drivers/gpu/drm/panel/panel-oppo-ea8064.c
+overlay/drivers/gpu/drm/panel/panel-oppo-ea8064.c       # 16017 EA8064 AMOLED
+overlay/drivers/gpu/drm/panel/panel-oppo-jdi-r63452.c   # 16027 JDI R63452（实机，默认）
 .github/workflows/build.yml
 ```
 
@@ -93,11 +98,29 @@ overlay/drivers/gpu/drm/panel/panel-oppo-ea8064.c
   `drm_modes.h`、`drm_panel.h`。
 - **FIXME(硬件)**：本驱动对应的是 **16017/Samsung**。若实机是 16027/JDI，需要新驱动。
 
+### 2.2b `overlay/drivers/gpu/drm/panel/panel-oppo-jdi-r63452.c`（JDI 驱动，实机 16027）
+
+**compatible**：`oppo,r63452-cmd`。**mode**：1080x1920 CMD 60Hz；像素时钟 ≈ **149.45MHz**
+（h_total 1276=1080+100+2+94，v_total 1952=1920+8+4+20）；4 lanes、RGB888、
+`MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM`（vendor 开了 `tx-eot-append`，
+所以**不要**加 `MIPI_DSI_MODE_NO_EOT_PACKET`）。
+
+**on/off 序列**：逐字节转录自 vendor dtsi（`0x39` 长写为主；on 末 `11 00`(sleep out, 120ms)
+→ `29 00`(display on, 20ms)；off 为 `0x05` 短写 `28`(20ms) → `10`(120ms)）。DCS 数值照抄，
+不要"清理"。**reset 序列 `<1 15> <0 2> <1 15>`**（reset 为高有效）。
+
+**供电/GPIO**：
+- reset-gpio = **tlmm 131**（高有效），enable-gpio = **tlmm 38**（高有效）。
+- supplies：`lab`/`ibb` → `&lab`/`&ibb`（pmi8950，LCD bias 模式）。`vdd`(2.85V)/`vddio`(1.8V)
+  是 optional（`devm_regulator_get_optional`），**真实 rail FIXME(unverified)**，dts 暂未绑定。
+- **背光未接入**：16027 的背光是独立 **LM3697** @ `i2c_2` 0x36（enable 46），本驱动不含。
+- TE(24)/bklight-en(34) 未在驱动中处理，留给后续。
+
 ### 2.3 `configs/r9s.fragment`（配置片段，merge 到 ARCH=arm64 defconfig）
 
 分组：SoC/power（LABIBB/SPMI/RPM/RPMH/interconnect）、display（DRM/MSM/MDP5/DSIO、
-`DRM_PANEL_OPPO_EA8064`、DSI PHY、fb console + boot logo —— 这是我们判断"屏活没活"
-的唯一可见信号）、input（RMI4 S3508 + gpio-keys）、leds（ktd2026）、storage/usb
+`DRM_PANEL_OPPO_EA8064` + `DRM_PANEL_JDI_R63452`、DSI PHY、fb console + boot logo ——
+这是我们判断"屏活没活"的唯一可见信号）、input（RMI4 S3508 + gpio-keys）、leds（ktd2026）、storage/usb
 （MMC_SDHCI_MSM、DWC3、gadget+configfs/adb serial）、log（PSTORE_RAM、EARLY_PRINTK、
 `LOCALVERSION=-r9s-mainline`）。显式关闭暂时不做的：snd soc qcom、panel-simple、
 touchscreen dsx、camera。
@@ -182,11 +205,14 @@ make -j"$(nproc)" ARCH=arm64 Image.gz dtbs modules
 
 ## 6. 已知 FIXME / Blockers
 
-1. **实机面板可能是 16027/JDI，不是 16017/EA8064**（见 §1）——显示问题最高优先。需要
-   确认实机型号；若 JDI，实现对应 panel 驱动并改 board dts。
-2. **VNEG(ibb) 尚未在真机启用**：驱动已支持（opt-in），dts 默认注释 `vneg-supply=<&ibb>`；
-   确认极性/等级前不接，避免伤屏。
-3. **ramoops 地址与 Lineage 运行内核不一致**（§5），影响 pstore 采集。
+1. **16027 显示已切到 JDI r63452**（§1/§2.2b），但仍有未落地项：
+   - **背光**：LM3697 @ `i2c_2` 0x36（enable 46）未接入 → 即使面板起来也看不到亮图。
+   - **vdd(2.85V)/vddio(1.8V) 具体 PMIC rail** 未定，panel 节点暂未绑定。
+   - TE(24)/bklight-en(34) 未在驱动处理。
+   - 首次真机上次是否真的点亮、有没有进用户态，仍在等一条可读的 mainline pstore。
+2. **ramoops 地址与 Lineage 运行内核不一致**（§5）：mainline `0x9ff00000` vs Lineage
+   `0xb0000000`，互读还需 record-size/压缩一致 → 影响能否采到 mainline 的 boot 日志。
+3. 16017 侧（EA8064）先搁置：其 VNEG(ibb) 负压轨仍是 opt-in/未启用（若将来要支持 16017）。
 4. mainline 内核起来后**能否进入用户态**未证实（Android 超出范围 → 目标是
    postmarketOS/Debian 风格 Linux）。
 5. 无可用调试 UART。
